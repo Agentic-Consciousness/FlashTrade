@@ -1,0 +1,38 @@
+name: Verify
+
+# The project's test suite. There was no earlier test pipeline for this repository.
+# Runs on the personal runner pool only when the organisation variable PERSONAL_GITHUB_CI_ENABLED is 'true'.
+# Pull requests from forks never run here: the self-hosted runners only take this repository's own branches.
+# Nothing deploys and no secrets are used (Vercel's own GitHub link handles deployment).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: ${{ vars.PERSONAL_GITHUB_CI_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: Verify
+    runs-on: [personal-official]
+    container:
+      image: python:3.12-bookworm
+      options: --init --cpus 2 --memory 4g
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          persist-credentials: false
+      - name: Trust the checked-out workspace
+        # The job container's user differs from the checkout's owner, so git refuses to read it otherwise.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Run the checks
+        run: bash .github/scripts/verify.sh
