@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
+from app.config import settings
 from app.services.risk_manager import Order, RiskManager, RiskVerdict
 
 
@@ -50,12 +51,16 @@ class TestRiskManagerBasics:
 
 
 class TestPositionSizeLimits:
-    def test_reject_oversized_position(self):
+    def test_downsize_oversized_position(self):
+        """Orders above the position cap are cut down to the cap and approved."""
         rm = RiskManager()
         order = make_order(quantity_cents=20000)  # $200 > $100 max
+        assert order.quantity_cents > settings.max_position_size_cents
         result = rm.evaluate(order)
-        assert result.approved is False
-        assert "exceeds max" in result.reason.lower()
+        assert result.approved is True
+        assert result.adjusted_quantity_cents == settings.max_position_size_cents
+        assert result.adjusted_quantity_cents < order.quantity_cents
+        assert result.reason == "All risk checks passed"
 
     def test_approve_max_position(self):
         rm = RiskManager()
@@ -71,15 +76,41 @@ class TestPositionSizeLimits:
 
 
 class TestPerTradeRisk:
-    def test_reject_excessive_per_trade_risk(self):
+    def test_downsize_excessive_per_trade_risk(self):
+        """Stop-distance risk above the portfolio limit is sized down to fit.
+
+        Risk is position notional times the stop distance, not the raw price gap.
+        A $10,000 portfolio and the $100 position cap cannot breach 2% (max loss
+        on $100 is $100, and 2% of $10,000 is $200), so this uses a smaller book.
+        """
         rm = RiskManager()
-        rm.set_portfolio_value(1_000_000)  # $10,000
-        # Risk = |15000 - 1000| = 14000 cents = $140, max 2% = $200
-        # Actually that's fine. Let's make the gap bigger.
-        order = make_order(price_cents=15000, stop_loss_cents=1)
-        # Risk = 14999 cents > 20000 cents (2% of $10k)? No, 14999 < 20000.
-        # Need risk > $200 (20000 cents)
-        order = make_order(price_cents=50000, stop_loss_cents=1)
+        portfolio_cents = 100_000  # $1,000; 2% = $20
+        rm.set_portfolio_value(portfolio_cents)
+        order = make_order(
+            quantity_cents=10_000,  # $100, already at the position cap
+            price_cents=10_000,
+            stop_loss_cents=5_000,  # 50% stop → $50 risk before downsizing
+        )
+        result = rm.evaluate(order)
+
+        max_risk_cents = int(portfolio_cents * settings.max_per_trade_risk_pct / 100)
+        stop_pct = abs(order.price_cents - order.stop_loss_cents) / order.price_cents
+        assert int(order.quantity_cents * stop_pct) > max_risk_cents
+
+        assert result.approved is True
+        assert result.adjusted_quantity_cents == 4_000  # $20 risk / 50% stop
+        assert result.adjusted_quantity_cents < order.quantity_cents
+        assert int(result.adjusted_quantity_cents * stop_pct) <= max_risk_cents
+
+    def test_reject_when_min_position_still_exceeds_risk(self):
+        """Reject when even a $1 position would breach the per-trade risk limit."""
+        rm = RiskManager()
+        rm.set_portfolio_value(1_000)  # $10; 2% = 20 cents
+        order = make_order(
+            quantity_cents=10_000,
+            price_cents=10_000,
+            stop_loss_cents=1,  # stop essentially at zero
+        )
         result = rm.evaluate(order)
         assert result.approved is False
         assert "per-trade risk" in result.reason.lower()

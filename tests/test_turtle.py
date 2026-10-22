@@ -69,30 +69,23 @@ def _make_ohlcv(
     return df
 
 
-def _make_breakout_df(
-    n: int = 80,
-    base_price: int = 10000,
-    breakout_at: int = 70,
-    breakout_size: int = 500,
+def _make_level_then_move_df(
+    n: int,
+    base_price: int,
+    last_close: int,
 ) -> pd.DataFrame:
-    """Generate data with a clear breakout for testing entry signals.
+    """Flat OHLCV, with the close change isolated on the final bar.
 
-    Flat price for `breakout_at` bars, then a sharp move up.
+    Turtle strategies evaluate only the latest bar. The backtest engine calls
+    them once per bar on an expanding window, so a cross that happened earlier
+    is not re-signalled once the channel has absorbed it.
     """
-    rng = np.random.RandomState(99)
-    closes = []
-    for i in range(n):
-        if i < breakout_at:
-            closes.append(base_price + rng.randn() * 30)
-        else:
-            closes.append(base_price + breakout_size + rng.randn() * 30)
-    closes = np.array(closes)
+    closes = np.full(n, float(base_price))
+    closes[-1] = float(last_close)
     highs = closes + 50
-    lows = closes - 50
-    lows = np.maximum(lows, 100)
-    opens = closes + rng.randn(n) * 20
-    volumes = rng.uniform(1000, 10000, n)
-
+    lows = np.maximum(closes - 50, 100)
+    opens = closes.copy()
+    volumes = np.full(n, 5000.0)
     dates = pd.date_range("2025-01-01", periods=n, freq="h", tz=timezone.utc)
     return pd.DataFrame({
         "open": opens,
@@ -101,37 +94,24 @@ def _make_breakout_df(
         "close": closes,
         "volume": volumes,
     }, index=dates)
+
+
+def _make_breakout_df(
+    n: int = 80,
+    base_price: int = 10000,
+    breakout_size: int = 500,
+) -> pd.DataFrame:
+    """Flat history, then a close above the prior channel on the final bar."""
+    return _make_level_then_move_df(n, base_price, base_price + breakout_size)
 
 
 def _make_exit_df(
     n: int = 80,
     base_price: int = 10000,
-    drop_at: int = 70,
     drop_size: int = 500,
 ) -> pd.DataFrame:
-    """Generate data with a clear drop for testing exit signals."""
-    rng = np.random.RandomState(77)
-    closes = []
-    for i in range(n):
-        if i < drop_at:
-            closes.append(base_price + rng.randn() * 30)
-        else:
-            closes.append(base_price - drop_size + rng.randn() * 30)
-    closes = np.array(closes)
-    highs = closes + 50
-    lows = closes - 50
-    lows = np.maximum(lows, 100)
-    opens = closes + rng.randn(n) * 20
-    volumes = rng.uniform(1000, 10000, n)
-
-    dates = pd.date_range("2025-01-01", periods=n, freq="h", tz=timezone.utc)
-    return pd.DataFrame({
-        "open": opens,
-        "high": highs,
-        "low": lows,
-        "close": closes,
-        "volume": volumes,
-    }, index=dates)
+    """Flat history, then a close below the prior exit channel on the final bar."""
+    return _make_level_then_move_df(n, base_price, base_price - drop_size)
 
 
 # ---------- donchian_channel tests ----------
@@ -200,7 +180,7 @@ class TestTurtleCryptoStrategy:
 
     def test_buy_signal_on_breakout(self):
         """Strategy should emit buy on close above entry channel upper."""
-        df = _make_breakout_df(n=80, breakout_at=70, breakout_size=500)
+        df = _make_breakout_df(n=80, breakout_size=500)
         strat = TurtleCryptoStrategy()
         signals = strat.generate_signals(df, "BTC", "crypto")
 
@@ -212,7 +192,7 @@ class TestTurtleCryptoStrategy:
 
     def test_sell_signal_on_drop(self):
         """Strategy should emit sell when close drops below exit channel."""
-        df = _make_exit_df(n=80, drop_at=70, drop_size=500)
+        df = _make_exit_df(n=80, drop_size=500)
         strat = TurtleCryptoStrategy()
         signals = strat.generate_signals(df, "BTC", "crypto")
 
@@ -238,7 +218,7 @@ class TestTurtleStocksStrategy:
 
     def test_buy_signal_on_breakout(self):
         """Stocks strategy also emits buy on channel breakout."""
-        df = _make_breakout_df(n=80, breakout_at=65, breakout_size=500)
+        df = _make_breakout_df(n=80, breakout_size=500)
         strat = TurtleStocksStrategy()
         signals = strat.generate_signals(df, "AAPL", "us")
 
@@ -253,7 +233,7 @@ class TestTurtleStocksStrategy:
 class TestTurtlePyramiding:
     def test_pyramid_count_tracked(self):
         """After a breakout entry, pyramid_count should be 1."""
-        df = _make_breakout_df(n=80, breakout_at=70, breakout_size=500)
+        df = _make_breakout_df(n=80, breakout_size=500)
         strat = TurtleCryptoStrategy()
         strat.generate_signals(df, "BTC", "crypto")
 
@@ -264,7 +244,7 @@ class TestTurtlePyramiding:
 
     def test_pyramid_resets_on_exit(self):
         """Pyramid count resets to 0 when sell signal is generated."""
-        df = _make_exit_df(n=80, drop_at=70, drop_size=500)
+        df = _make_exit_df(n=80, drop_size=500)
         strat = TurtleCryptoStrategy()
         # Pre-set as if we had a position
         strat._pyramid_count = 2
@@ -284,7 +264,7 @@ class TestTurtlePyramiding:
         strat._current_n = 100.0
 
         # Generate signals on breakout data — should NOT get a pyramid buy
-        df = _make_breakout_df(n=80, breakout_at=70, breakout_size=500)
+        df = _make_breakout_df(n=80, breakout_size=500)
         signals = strat.generate_signals(df, "BTC", "crypto")
 
         # Filter for pyramid-specific buys (strength=0.5)
@@ -358,8 +338,12 @@ class TestBrokerPyramiding:
         assert broker.position.stop_loss_cents == 9500
 
     def test_add_skipped_if_insufficient_cash(self):
-        """Pyramid should be skipped if cash is too low."""
-        broker = BacktestBroker(starting_cash_cents=5100)
+        """Pyramid adds are skipped when remaining cash is under the $1 minimum.
+
+        The add is clamped to cash on hand and only abandoned below 100 cents.
+        Fees are tracked apart from cash, so 5099 - 5000 leaves 99 cents.
+        """
+        broker = BacktestBroker(starting_cash_cents=5099)
 
         signal1 = Signal(
             symbol="BTC", market="crypto", action="buy", strength=0.7,
@@ -370,7 +354,6 @@ class TestBrokerPyramiding:
         bar_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
         broker.process_bar(signal1, 10100, 9900, 10000, bar_time, 0, "crypto")
 
-        # Cash should be ~100 now, not enough for pyramid
         signal2 = Signal(
             symbol="BTC", market="crypto", action="buy", strength=0.5,
             stop_loss_cents=9500, price_cents=10500, reason="pyramid",
@@ -380,8 +363,9 @@ class TestBrokerPyramiding:
         bar_time2 = datetime(2025, 1, 1, 1, tzinfo=timezone.utc)
         broker.process_bar(signal2, 10600, 10400, 10500, bar_time2, 1, "crypto")
 
-        # Should still be pyramid_count=1 (addition skipped)
         assert broker.position.pyramid_count == 1
+        assert broker.position.quantity_cents == 5000
+        assert broker.cash_cents == 99
 
     def test_close_after_pyramid_records_total_pnl(self):
         """Closing a pyramided position should record total P&L."""
