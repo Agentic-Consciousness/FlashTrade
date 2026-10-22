@@ -50,12 +50,13 @@ class TestRiskManagerBasics:
 
 
 class TestPositionSizeLimits:
-    def test_reject_oversized_position(self):
+    def test_downsize_oversized_position(self):
+        """Oversized orders are cut to the max position size instead of rejected."""
         rm = RiskManager()
         order = make_order(quantity_cents=20000)  # $200 > $100 max
         result = rm.evaluate(order)
-        assert result.approved is False
-        assert "exceeds max" in result.reason.lower()
+        assert result.approved is True
+        assert result.adjusted_quantity_cents == 10000  # $100 max position
 
     def test_approve_max_position(self):
         rm = RiskManager()
@@ -71,15 +72,23 @@ class TestPositionSizeLimits:
 
 
 class TestPerTradeRisk:
-    def test_reject_excessive_per_trade_risk(self):
+    def test_downsize_to_per_trade_risk_limit(self):
+        """A position risking more than 2% of the portfolio is shrunk to fit the limit."""
         rm = RiskManager()
-        rm.set_portfolio_value(1_000_000)  # $10,000
-        # Risk = |15000 - 1000| = 14000 cents = $140, max 2% = $200
-        # Actually that's fine. Let's make the gap bigger.
-        order = make_order(price_cents=15000, stop_loss_cents=1)
-        # Risk = 14999 cents > 20000 cents (2% of $10k)? No, 14999 < 20000.
-        # Need risk > $200 (20000 cents)
-        order = make_order(price_cents=50000, stop_loss_cents=1)
+        rm.set_portfolio_value(100_000)  # $1,000 -> max risk 2% = 2000 cents
+        # 50% stop distance on a $100 position risks 5000 cents > 2000
+        order = make_order(quantity_cents=10000, price_cents=15000, stop_loss_cents=7500)
+        result = rm.evaluate(order)
+        assert result.approved is True
+        # 2000 cents of risk / 50% stop distance = 4000 cents
+        assert result.adjusted_quantity_cents == 4000
+
+    def test_reject_when_minimum_position_exceeds_per_trade_risk(self):
+        """If even a $1 position would breach the per-trade risk limit, reject."""
+        rm = RiskManager()
+        rm.set_portfolio_value(1_000)  # $10 -> max risk 2% = 20 cents
+        # 50% stop: a safe size would be 40 cents, below the $1 minimum
+        order = make_order(quantity_cents=10000, price_cents=15000, stop_loss_cents=7500)
         result = rm.evaluate(order)
         assert result.approved is False
         assert "per-trade risk" in result.reason.lower()

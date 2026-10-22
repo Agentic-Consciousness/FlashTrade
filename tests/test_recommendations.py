@@ -126,7 +126,7 @@ class TestPromptBuilding:
         assert "BTC" in prompt
         assert "15000000" in prompt
         assert "insufficient data" in prompt
-        assert "recommendations" in prompt
+        assert "3 recs per market (crypto, asx, us, uk)" in prompt
 
     def test_build_user_prompt_handles_none_indicators(self):
         recommender = ClaudeRecommender()
@@ -351,7 +351,7 @@ class TestMarketNewsModels:
             generated_at_utc="2025-01-01T00:00:00Z",
         )
         assert news.us_news.headline == "US up"
-        assert news.model_used == "claude-sonnet-4-6"
+        assert news.model_used == "claude-haiku-4-5-20251001"
         assert news.token_usage == {}
 
     def test_market_news_with_uk_recommendation(self):
