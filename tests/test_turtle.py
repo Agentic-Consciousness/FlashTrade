@@ -200,7 +200,8 @@ class TestTurtleCryptoStrategy:
 
     def test_buy_signal_on_breakout(self):
         """Strategy should emit buy on close above entry channel upper."""
-        df = _make_breakout_df(n=80, breakout_at=70, breakout_size=500)
+        # Signals are evaluated on the latest bar (expanding window), so the move happens there.
+        df = _make_breakout_df(n=80, breakout_at=79, breakout_size=500)
         strat = TurtleCryptoStrategy()
         signals = strat.generate_signals(df, "BTC", "crypto")
 
@@ -212,7 +213,8 @@ class TestTurtleCryptoStrategy:
 
     def test_sell_signal_on_drop(self):
         """Strategy should emit sell when close drops below exit channel."""
-        df = _make_exit_df(n=80, drop_at=70, drop_size=500)
+        # Signals are evaluated on the latest bar (expanding window), so the move happens there.
+        df = _make_exit_df(n=80, drop_at=79, drop_size=500)
         strat = TurtleCryptoStrategy()
         signals = strat.generate_signals(df, "BTC", "crypto")
 
@@ -238,7 +240,8 @@ class TestTurtleStocksStrategy:
 
     def test_buy_signal_on_breakout(self):
         """Stocks strategy also emits buy on channel breakout."""
-        df = _make_breakout_df(n=80, breakout_at=65, breakout_size=500)
+        # Signals are evaluated on the latest bar (expanding window), so the move happens there.
+        df = _make_breakout_df(n=80, breakout_at=79, breakout_size=500)
         strat = TurtleStocksStrategy()
         signals = strat.generate_signals(df, "AAPL", "us")
 
@@ -359,7 +362,8 @@ class TestBrokerPyramiding:
 
     def test_add_skipped_if_insufficient_cash(self):
         """Pyramid should be skipped if cash is too low."""
-        broker = BacktestBroker(starting_cash_cents=5100)
+        # 5050 - 5000 leaves 50 cents, below the $1 minimum addition
+        broker = BacktestBroker(starting_cash_cents=5050)
 
         signal1 = Signal(
             symbol="BTC", market="crypto", action="buy", strength=0.7,
@@ -370,7 +374,7 @@ class TestBrokerPyramiding:
         bar_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
         broker.process_bar(signal1, 10100, 9900, 10000, bar_time, 0, "crypto")
 
-        # Cash should be ~100 now, not enough for pyramid
+        # Cash is 50 cents now, not enough for a pyramid addition
         signal2 = Signal(
             symbol="BTC", market="crypto", action="buy", strength=0.5,
             stop_loss_cents=9500, price_cents=10500, reason="pyramid",
