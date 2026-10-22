@@ -3,7 +3,7 @@ name: Verify
 # The project's test suite. There was no earlier test pipeline for this repository.
 # Runs on the personal runner pool only when the organisation variable PERSONAL_GITHUB_CI_ENABLED is 'true'.
 # Pull requests from forks never run here: the self-hosted runners only take this repository's own branches.
-# Nothing deploys and no secrets are used (Vercel's own GitHub link handles deployment).
+# Nothing deploys and no secrets are used. The old deploy workflow is disabled.
 on:
   pull_request:
     branches: [main]
