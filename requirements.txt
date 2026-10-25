@@ -27,7 +27,7 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
 # HTTP client
-httpx>=0.26.0
+httpx>=0.28.1
 
 # AI recommendations
 anthropic>=0.40.0
