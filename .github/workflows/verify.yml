@@ -1,9 +1,12 @@
 name: Verify
 
-# The project's test suite. There was no earlier test pipeline for this repository.
-# Runs on the personal runner pool only when the organisation variable PERSONAL_GITHUB_CI_ENABLED is 'true'.
-# Pull requests from forks never run here: the self-hosted runners only take this repository's own branches.
-# Nothing deploys and no secrets are used. The old deploy workflow is disabled.
+# The project's test suite. Nothing deploys and no secrets are used.
+# This repository is public, and pull_request runs the workflow from the pull
+# request. A self-hosted runner here would let an outsider execute that code on
+# the owner's machine, so every event — including ones only maintainers can
+# fire — stays on a GitHub-hosted runner.
+# The suite still runs only when PERSONAL_GITHUB_CI_ENABLED is 'true', and
+# pull requests still have to come from this repository.
 on:
   pull_request:
     branches: [main]
@@ -22,12 +25,20 @@ jobs:
   verify:
     if: ${{ vars.PERSONAL_GITHUB_CI_ENABLED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Verify
-    runs-on: [personal-official]
+    runs-on: ubuntu-latest
     container:
       image: python:3.12-bookworm
       options: --init --cpus 2 --memory 4g
     timeout-minutes: 30
     steps:
+      - name: Install git
+        # checkout and verify.sh call git. The bookworm image ships it via
+        # buildpack-deps; install it when the image does not.
+        run: |
+          if ! command -v git >/dev/null 2>&1; then
+            apt-get update
+            apt-get install -y --no-install-recommends git
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
         with:
           persist-credentials: false
